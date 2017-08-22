@@ -1,0 +1,1 @@
+perl /panfs/home/VIP/maofb/MB/cosmos/MBRidge-pipe/bin/combine_cout.pl -i /panfs/home/VIP/maofb/MB/cosmos/MBRidge-pipe/test/rrbs.cout -o /panfs/home/VIP/maofb/MB/cosmos/MBRidge-pipe/test/Methyrate_RRBS/RRBS.combined.cout

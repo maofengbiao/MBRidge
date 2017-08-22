@@ -1,6 +1,6 @@
 
 MBRidge 1.1.9
-# Gene annotation files could be downloaded from "https://sourceforge.net/projects/mbridgedb"
+# Gene annotation files could be downloaded from <a>https://sourceforge.net/projects/mbridgedb</a>
 1. Introduction
    To overcome the limitations of existing methods in detecting DNA
 methylation, we modified the MeDIP-seq protocol to encompass

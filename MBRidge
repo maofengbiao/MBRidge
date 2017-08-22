@@ -1,0 +1,1477 @@
+#! /usr/bin/perl
+use strict;
+use warnings;
+use Getopt::Long;
+use FindBin qw($Bin $Script);
+use Cwd qw(abs_path);
+use File::Basename;
+
+=pod
+description: MBRidge, 1.1.9 version 
+author: Mao FengBiao,maofengiao@gmail.com ; Cai Wanshi,caiwanshi@126.com
+project: Estimating absolute single-base methylation level from MB-seq data and RRBS data
+created date: 20140707
+=cut
+
+my ($Help,$form,$fqlist,$form1,$fqlist1,$form2,$fqlist2,$outdir,$qvalue,$ref,$cpu,$um,$qs,$dep,$bayesp,$convert,$adap,$n,$verb,$ele,$match,$women,$genome,$cpg,$enzyme,$pat,$rmdup1,$rmdup2,$alpha,$s,$handle,$trim,$bayesdir,$mapresult,$qc,$pileupdir);
+GetOptions
+(
+	"help:s"=>\$Help,
+	"f1:s"=>\$form1,
+	"f2:s"=>\$form2,
+	"i1:s"=>\$fqlist1,
+	"i2:s"=>\$fqlist2,
+	"o:s"=>\$outdir,
+	"u:s"=>\$um,
+	"k:s"=>\$handle,
+	"t:i"=>\$cpu,
+	"r:f"=>\$alpha,
+	"s:f"=>\$s,
+	"q:i"=>\$qvalue,
+	"d:i" =>\$dep,
+	"z:i" =>\$trim,
+	"g:s" =>\$ref,
+	"w" =>\$women,
+	"a" =>\$adap,
+	"c:s" =>\$cpg,
+	"n:s" =>\$n,
+	"e:s" =>\$ele,
+	"m:s" =>\$match,
+	"y:s" =>\$enzyme,	
+	"p:s"=>\$pat,
+	"x1"=>\$rmdup1,
+	"x2"=>\$rmdup2,
+	"v"=>\$verb,
+);
+###########################==================usage====================##########################
+my $usage=<<USAGE;
+\n====================================================================\n$0\n---------
+____        ____   _ ______    _________             _
+M _ \\      / _ M  B B_____ \\  R R_____ R\\    o      d |
+| |\\ \\    / /| |  | |_____| | | |_____| |   i i  /--| |  -----     e-----e
+| | \\ \\  / / | |  | |_____| | | |_  __|_|   | | / / | | g g--\\ \\  / /____\\\\
+| |  \\ \\/ /  | |  | |_____| | | | \\ \\____   | | | | | | | |  | |  | |___| |
+M_M   \\__/   M_M  B_B______/  R_R  \\_____R  |_| \\_\\_|_| \\ \\__| |  \\ \\_____
+                                                             | |   \\_____/
+                                                         ____/ /
+                                                         \\____/   
+====================================================================
+Welcome to MBRidge\n
+\nDescription:\n\n\tEstimating genome-wide single-base methylation level from MB-seq data combined with RRBS data. We apply algorithm of Ridge model to calibrate MB-seq data into absolute methylation levels at single-CpG resolution.
+
+
+Version:1.1.9
+
+Usage:
+
+        $0  -f1 <format of MB-seq> -i1 <input.list of MB-seq> -f1 <format of RRBS> -i1 <input.list of RRBS> -g <reference> -o <outdir> [options]
+====================================================================
+Required parameters:
+--------------------
+	-f1  <str>   the format of input for MB-seq : cout/fq/sam/bam
+	-i1  <str>   a list file of MB-seq, contains one or more deals (one deal per line), which should match the -f1 parameter.
+		(1)input.lib.list : a fastq list file with spaces delimited; the gzip files are supported;for pared-end sequencing: fq1_path fq2_path min_insertsize max_insertsize; for sigle-end sequencing: fq1_path; and the list file can simultaneously contain SE and PE reads list;
+		(2)sam.list: these SAM files should be the outputs of bisulfite mapping software,such as BSMAP or SAAP
+		(3)bam.list: these BAM files should be the outputs of bisulfite mapping software,such as BSMAP or SAAP
+		example:
+		cout:
+			MB_path/rep1.cout
+			MB_path/rep2.cout
+		fq:
+			MB_path/rep1_read1.fq   MB_path/rep1_read2.fq 100  500
+			MB_path/rep2_read.fq.gz
+		sam:	
+			MB_path/rep1.sam
+			MB_path/rep2.sam
+		bam:
+			MB_path/rep1.bam
+			MB_path/rep2.bam
+	-f2  <str>   the format of input for RRBS: cout/fq/sam/bam
+        -i2  <str>   a list file of RRBS, contains one or more deals (one deal per line), which should match the -f2 paramete
+r. (similar to i1)
+                example:
+                cout:
+                        RRBS_path/rep1.cout
+                        RRBS_path/rep2.cout
+                fq:
+                        RRBS_path/rep1_read1.fq   RRBS_path/rep1_read2.fq  40  300
+                        RRBS_path/rep2_read.fq.gz
+                sam:    
+                        RRBS_path/rep1.sam
+                        RRBS_path/rep2.sam
+		bam:
+                        MB_path/rep1.bam
+                        MB_path/rep2.bam
+	-g  <str>   genome reference (as a whole, fasta format), is required when inputs contain fastq format.
+	-c  <str>   Directory contains CpG information of genome.
+	-e  <str>   Directory contains genomic elements. 
+
+---------------------
+optimized parameters:
+---------------------
+
+	-o  <str>   outputdir: expected to be absoulte path [default="./"]
+	-t  <int>   number of processors to use [default=8].
+	-v  <str>   verbose informations are retained, "yes" or "no". "yes" is for debugging [default="no"].
+	-x1 <tag>   remove potential PCR duplication for MB-seq when input format is fq/sam/bam, default is omited.
+	-x2 <tag>   remove potential PCR duplication for RRBS when input format is fq/sam/bam, default is omited.
+	-z  <int>   trim N end-repairing fill-in nucleotides for RRBS when input format is fq/sam/bam [default=0].
+	-h  <tag>   show this help information.
+------------------------
+parameters for fq input:
+------------------------
+
+	-u  <int>   if this value is between 0 and 1, it's interpreted as the mismatch rate w.r.t to the read length.
+                    otherwise it's interpreted as the maximum number of mismatches allowed on a read, <=15.
+                    example: -v 5 (max #mismatches = 5), -v 0.1 (max #mismatches = read_length * 10%) [default=0.05].
+	-q  <int>   quality threshold in trimming,0-40 [default=0] (no trim).
+	-a  <str>   removed 3-end adapter sequence [default=none].
+	-n  <int>   filter low-quality reads containing >n Ns [default=5].
+	-w  <int>   set mapping strand information [default=0].
+                    -w 0: only map to 2 forward strands, i.e. BSW(++) and BSC(-+), 
+                    for PE sequencing, map read#1 to ++ and -+, read#2 to +- and --.
+                    -w 1: map SE or PE reads to all 4 strands, i.e. ++, +-, -+, -- 
+	-m  <str>   set alignment information for the additional nucleotide transition [default="TC"]. 
+                    <str> is in the form of two different nucleotides N1N2, 
+                    indicating N1 in the reads could be mapped to N2 in the reference sequences.
+                    default: -m TC, corresponds to C=>U(T) transition in bisulfite conversion. 
+                    example: -m GA could be used to detect A=>I(G) transition in RNA editing. 
+	-y  <str>   activating RRBS mapping mode and set restriction enzyme digestion sites. 
+                    digestion position marked by '-', example: -y C-CGG for MspI digestion [default="C-CGG"].
+
+--------------------------
+parameters for prediction:
+--------------------------
+	-k  <str>   handle sampling of Ridge training, "half" or "random", "half" means stably
+                    choosing the first half part of dataset while "random" means randomly choosing  
+                    half part of dataset [default="random"].
+	-s  <flo>   value(s) of the penalty parameter lambda at which predictions are required [default=0.06].
+	-r  <flo>   values of alpha used in the fits,alpha=1 is the lasso penalty, and alpha=0 the ridge 
+		    penalty, otherwise (alpha>0 and alpha<1) is elastic net penalty [default=0].
+	-d  <int>   depth threshold for RRBS covered sites [default=10].
+	-p  <str>   pattern of C context (CG/CHG/CHH) [default="CG"].
+
+=====================================================================
+Example :
+---------
+$0 -f1 cout -i1 MB.cout.list -f2 cout -i2 RRBS.cout.list -c /CpG-density-dir/ -e /element-bed-dir/ -o ./
+$0 -f1 fq -i1 MB.fq.list -f2 fq -i2 RRBS.fq.list -g hg19.fa -c /CpG-density-dir/ -e /element-bed-dir/ -o ~/MB/results/
+$0 -f1 fq -i1 MB.fq.list -f2 sam -i2 RRBS.sam.list -g hg19.fa -c /CpG-density-dir/ -e /element-bed-dir/ -o /Dir/MB/
+$0 -f1 bam -i1 MB.bam.list -f2 bam -i2 RRBS.bam.list -c /CpG-density-dir/ -e /element-bed-dir/ -o /Dir/MB/
+
+USAGE
+
+die $usage if ($Help || (!$fqlist1) || (!$form1) || (!$fqlist2) || (!$form2));
+
+################################=============parameters====================#########################
+$cpu||=8 unless (defined $cpu && $cpu==0);
+$um||=0.05 unless (defined $um && $um==0);
+$qvalue||=0 unless (defined $qvalue && $qvalue==0);
+$dep||=10 unless (defined $dep && $dep==0);
+$n||=5 unless (defined $n && $n==0);
+$match||="TC";
+$women||=0 unless (defined $women && $women==0);
+$s||=0.06 unless (defined $s && $s==0);
+$alpha||=0 unless (defined $alpha && $alpha==0);
+$pat||="CG";
+$trim||=0 unless (defined $trim && $trim==0);
+$enzyme||="C-CGG";
+$handle||="rand";
+if(defined $verb){
+	$verb="yes";
+}else{
+	$verb="no";
+}
+my ($A,$E,$W,$M,$S,$rmdp1,$rmdp2);
+if (defined $adap){
+        $A="-A $adap";
+}else{$A="";}
+if (defined $rmdup1){
+        $rmdp1="--remove-duplicate";
+}else{$rmdp1="";}
+if (defined $rmdup2){
+        $rmdp2="--remove-duplicate";
+}else{$rmdp2="";}
+if (defined $women){
+        $W="-n $women";
+}else{$W="";}
+####################make outdir#################
+$outdir ||="./";
+my $outdirname=abs_path($outdir);
+$outdir=$outdirname;
+#print "$outdir\n";
+makedir($outdir);
+my $shell="$outdir/shell";
+makedir($shell);
+my ($mapresult1,$mapresult2);
+$mapresult1="$outdir/Mapresult_MB";
+$mapresult2="$outdir/Mapresult_RRBS";
+if ($fqlist1 =~/fq/i){
+	die "Please assign the parameter \"-g\" for reference of genome" if (! defined $ref);
+	makedir($mapresult1);
+}
+if ($fqlist2 =~/fq/i){
+	die "Please assign the parameter \"-g\" for reference of genome" if (! defined $ref);
+	makedir($mapresult2);
+}
+my $methydir1="$outdir/Methyrate_MB";
+my $methydir2="$outdir/Methyrate_RRBS";
+makedir($methydir1);
+makedir($methydir2);
+my $combine="$outdir/MB_combined_RRBS";
+makedir($combine);
+my $resultdir="$outdir/MBRidge_results";
+makedir($resultdir);
+
+my $bsmap_mb_sh="$shell/bsmap_mb.sh";
+my $bsmap_rrbs_sh="$shell/bsmap_rrbs.sh";
+
+my $combine_cout_mb_sh="$shell/combine_cout_mb.sh";
+my $combine_cout_rrbs_sh="$shell/combine_cout_rrbs.sh";
+
+my $mbridge_sh="$shell/MBRidge_prep.sh";
+my $mbridge_model="$shell/MBRidge_model.sh";
+my $mbridge_comb="$shell/MBRidge_comb.sh";
+
+my $sam2cout_mb_sh="$shell/sam2cout_mb.sh";
+my $sam2cout_rrbs_sh="$shell/sam2cout_rrbs.sh";
+
+#open RUN,">$shell/MBRidge_run.sh" or die "Cannot open $shell/MBRidge_run.sh\n";
+
+#----------------------------------------------------------------------------------------######
+###########################================ main project ===============#######################
+#----------------------------------------------------------------------------------------#######
+
+my $start=time();
+my $log;
+#for MB-seq
+#for MB-seq
+index_fq($fqlist1);
+if ($form1=~/cout/i){
+	&showLog("generate the scripts for combining couts of all replications !...MB-seq...");
+	comb_cout($fqlist1,$combine_cout_mb_sh,0,0,0,$methydir1);
+}elsif($form1 =~/fq/i){
+	open MBMAP,">$bsmap_mb_sh" or die "Cannot open $bsmap_mb_sh\n";
+	$M="-M $match";
+        $E="";
+        $S=16;	
+	&showLog("generate the bsmap scripts for bisulfite aligner mapping & methylation calling !...MB-seq...");
+	bsmap($mapresult1,$fqlist1,$A,$E,$W,$M,$S,*MBMAP,$rmdp1,0,0);
+	&showLog("generate the scripts for combining couts of sequencing replications !...MB-seq...");
+	comb_cout($fqlist1,$combine_cout_mb_sh,1,0,0,$methydir1);
+#	&showLog("generate the work scripts for methylation levels !...");
+}elsif($form1=~/sam/i){
+	&showLog("generate the callmethy scripts for methylation calling !...MB-seq...");
+	callmethy($fqlist1,$sam2cout_mb_sh,$rmdp1,0,$methydir1,0,0);#sub ($fqlist,$worksh,$rmdup,$trim,$outdir)
+	&showLog("generate the callmethy scripts for methylation calling !...MB-seq...");
+        comb_cout($fqlist1,$combine_cout_mb_sh,0,1,0,$methydir1);
+}elsif($form1=~/bam/i){
+        &showLog("generate the callmethy scripts for methylation calling !...MB-seq...");
+        callmethy($fqlist1,$sam2cout_mb_sh,$rmdp1,0,$methydir1,1,0);
+        &showLog("generate the scripts for combining couts of sequencing replications !...MB-seq...");
+        comb_cout($fqlist1,$combine_cout_mb_sh,0,1,0,$methydir1);
+}else{
+	die "Please check the parameter of \"-form\"; cout,fq,sam,bam lists are supported!\n";
+}
+
+#for RRBS
+#for RRBS
+
+index_fq($fqlist2);
+if ($form2=~/cout/i){
+        &showLog("generate the scripts for combining couts of all replications !...RRBS...");
+        comb_cout($fqlist2,$combine_cout_rrbs_sh,0,0,1,$methydir2);
+}elsif($form2 =~/fq/i){
+	open RRBSMAP,">$bsmap_rrbs_sh" or die "Cannot open $bsmap_rrbs_sh\n";
+	$M="-M $match";
+        $E="-D $enzyme";
+        $S=12;
+        &showLog("generate the bsmap scripts for bisulfite aligner mapping & methylation calling !...RRBS...");
+        bsmap($mapresult2,$fqlist2,$A,$E,$W,$M,$S,*RRBSMAP,$rmdp2,$trim,$dep);
+        &showLog("generate the scripts for combining couts of sequencing replications !...RRBS...");
+        comb_cout($fqlist2,$combine_cout_rrbs_sh,1,0,1,$methydir2);
+}elsif($form2=~/sam/i){
+        &showLog("generate the callmethy scripts for methylation calling !...");
+        callmethy($fqlist2,$sam2cout_rrbs_sh,$rmdp2,$trim,$methydir2,0,$dep);#sub ($fqlist,$worksh,$rmdup,$trim,$outdir)
+	&showLog("generate the scripts for combining couts of sequencing replications !...RRBS...");
+        comb_cout($fqlist2,$combine_cout_rrbs_sh,0,1,1,$methydir2);
+}elsif($form2=~/bam/i){
+	&showLog("generate the callmethy scripts for methylation calling !...");
+	callmethy($fqlist2,$sam2cout_rrbs_sh,$rmdp2,$trim,$methydir2,1,$dep);	
+	&showLog("generate the scripts for combining couts of sequencing replications !...RRBS...");
+        comb_cout($fqlist2,$combine_cout_rrbs_sh,0,1,1,$methydir2);
+}else{
+        die "Please check the parameter of \"-form\"; fq,sam,bam lists are supported!\n";
+}
+
+#for MBRidge
+#for MBRidge
+&showLog("generate the scripts for MBRidge prediction model !...");
+
+open MBR,">$mbridge_sh" or die "Cannot open $mbridge_sh\n";
+print MBR "
+perl  $Bin/bin/mb-methylback.pl  -i $methydir1/MB-seq.combined.cout -m $methydir1/MB-seq.combined.cout -o $combine/MB.backmethy -d 0 -s 201
+perl $Bin/bin/join_couts_backmethy_cpgdens.pl -d0 $methydir1/MB-seq.combined.cout  -d1 $methydir2/RRBS.combined.cout  -d2 $cpg/\\*.CG.density\\* -d3 $combine/MB.backmethy -o  $combine/all.MBRidge.input  
+awk '{if(\$3==\"+\"){print \$1\"\\t\"\$2\"\\t\"\$3\"\\t\"\$4\"\\t\"\$5\"\\t\"\$16\"\\t\"\$16+\$17\"\\t\"\$18\"\\t\"\$7\"\\t\"\$7+\$8\"\\t\"\$9\"\\t\"\$19\"\\t\"\$20\"\\t\"\$21\"\\t\"\$22\"\\t\"\$23}}'  $combine/all.MBRidge.input > $combine/all.MBRidge.input.format
+sort -k 1,1 -k 2,2n  $combine/all.MBRidge.input.format  -o $combine/all.MBRidge.input.format
+
+awk '{if(\$7>=$dep && \$6!~/NA/){print \$0}}' $combine/all.MBRidge.input.format > $combine/MBRidge.input.format
+
+#elements (RRBS>=10,contain MB-seq=zero)
+mkdir -p $combine/element;
+perl $Bin/bin/overlap_region.pl  $combine/MBRidge.input.format  $ele/\\*.sorted.bed\\*  $combine/element
+perl $Bin/bin/other_feature.pl -a $combine/MBRidge.input.format -i $combine/element/ele\\*.input  -o  $combine/element/other.input
+mv $combine/element/other.input  $combine/element/ele.other.input
+
+#elements (RRBS>=0,all)
+
+mkdir -p $combine/all_in_element;
+perl $Bin/bin/overlap_region.pl  $combine/all.MBRidge.input.format  $ele/\\*.sorted.bed\\*  $combine/all_in_element
+perl $Bin/bin/other_feature.pl -a $combine/all.MBRidge.input.format -i $combine/all_in_element/ele\\*.input  -o  $combine/all_in_element/other.input
+mv $combine/all_in_element/other.input  $combine/all_in_element/ele.other.input
+
+ls $combine/element/ele\*.input  | awk -F \"\[\/\.\]\" '{print \$(NF-1)}' > $combine/element/element.list
+
+if [ -f $shell/all.ele.model.sh ]; then
+	rm -rf $shell/all.ele.model.sh;
+fi 
+";
+#prediction and evaluation
+
+open MBM,">$mbridge_model" or die "Cannot open $mbridge_model\n";
+print MBM "
+for i in `cat $combine/element/element.list`;do
+echo \" perl $Bin/bin/allminusmodel.pl   -i $combine/element/ele.\$i.input  -a $combine/all_in_element/ele.\$i.input -o $combine/element/ridge.\$i.tst;  perl $Bin/bin/MBRidge.prediction.pl -m $combine/element/ele.\$i.input -t $combine/element/ridge.\$i.tst -k $handle -s $s -a $alpha -o $combine/element/  -n \$i \" >> $shell/all.ele.model.sh
+done
+";
+open MBC,">$mbridge_comb" or die "Cannot open $mbridge_comb\n";
+print MBC "
+perl $Bin/bin/average_outlier.methy.pl -i $combine/element/ele\\*.regression.result.xls -o $combine/average.regression.xls
+perl $Bin/bin/reform_combine.pl  -i $combine/average.regression.xls -a  $combine/all.MBRidge.input.format -t  $combine/MBRidge.input.format   > $resultdir/MBRidge.results.final.all.xls
+awk '{print \$1\"\\t\"\$2\"\\t\"\$3\"\\t\"\$4\"\\t\"\$8\"\\t\"\$18}'  $resultdir/MBRidge.results.final.all.xls >  $resultdir/MBRidge.results.final.simple.xls
+";
+
+##RUN..
+##RUN..
+open RUN,">$shell/MBRidge_run.sh" or die "Cannot open $shell/MBRidge_run.sh\n";
+if ($form1=~/cout/i){
+	if ($form2=~/cout/i){
+		print RUN "echo \"--------------------------------------------\" >&2 ;echo \"Project starts: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+echo \"---step [combine couts of MB-seq] starts-->: `date`\"  >&2 
+if
+	perl $Bin/bin/parawork.pl $shell/combine_cout_mb.sh $outdir $cpu 	
+then
+        echo \"---step [combine couts of MB-seq] done-->: `date`\" >&2 
+else
+        echo \"---step [combine couts of MB-seq] ERROR-->\" >&2 
+        exit
+fi
+
+echo \"---step [combine couts of RRBS] starts-->: `date`\"   >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of RRBS] done-->: `date`\"   >&2
+else
+        echo \"---step [combine couts of RRBS] ERROR-->\"   >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Preparing] starts-->: `date`\"   >&2
+if
+        bash $mbridge_sh
+then
+        echo \"---step [MBRidge Prediction Preparing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Preparing] ERROR-->\"   >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Modeling] starts-->: `date`\"   >&2
+if
+        bash $mbridge_model
+	perl $Bin/bin/parawork.pl $shell/all.ele.model.sh $outdir $cpu
+then
+        echo \"---step [MBRidge Prediction Modeling] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Modeling] ERROR-->\"   >&2
+        exit
+fi
+echo \"---step [MBRidge Prediction Summarizing] starts-->: `date`\"   >&2
+
+if
+        bash $mbridge_comb
+then
+        echo \"---step [MBRidge Prediction Summarizing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Summarizing] ERROR-->\"   >&2
+        exit
+fi
+
+
+echo \"--------------------------------------------\" >&2 ;echo \"Project ends: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+"
+	}elsif($form2 =~/fq/i){
+		print RUN "echo \"--------------------------------------------\" >&2 ;echo \"Project starts: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+echo \"---step [combine couts of MB-seq] starts-->: `date`\"   >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_mb.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of MB-seq] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of MB-seq] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [Bisulfite mapping and methylation calling of RRBS data] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/bsmap_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [Bisulfite mapping and methylation calling of RRBS data] done-->: `date`\" >&2
+else
+        echo \"---step [Bisulfite mapping and methylation calling of RRBS data] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [combine couts of RRBS] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of RRBS] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of RRBS] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Preparing] starts-->: `date`\"   >&2
+if
+        bash $mbridge_sh
+then
+        echo \"---step [MBRidge Prediction Preparing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Preparing] ERROR-->\"   >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Modeling] starts-->: `date`\"   >&2
+if
+        bash $mbridge_model
+        perl $Bin/bin/parawork.pl $shell/all.ele.model.sh $outdir $cpu
+then
+        echo \"---step [MBRidge Prediction Modeling] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Modeling] ERROR-->\"   >&2
+        exit
+fi
+echo \"---step [MBRidge Prediction Summarizing] starts-->: `date`\"   >&2
+
+if
+        bash $mbridge_comb
+then
+        echo \"---step [MBRidge Prediction Summarizing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Summarizing] ERROR-->\"   >&2
+        exit
+fi
+
+
+echo \"--------------------------------------------\" >&2 ;echo \"Project ends: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+";
+	}elsif($form2=~/sam/i || $form2=~/bam/i){
+		print RUN "echo \"--------------------------------------------\" >&2 ;echo \"Project starts: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+echo \"---step [combine couts of MB-seq] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_mb.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of MB-seq] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of MB-seq] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [methylation calling from $form2 format of RRBS data] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/sam2cout_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [methylation calling from $form2 format of RRBS data] done-->: `date`\" >&2
+else
+        echo \"---step [methylation calling from $form2 format of RRBS data] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [combine couts of RRBS] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of RRBS] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of RRBS] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Preparing] starts-->: `date`\"   >&2
+if
+        bash $mbridge_sh
+then
+        echo \"---step [MBRidge Prediction Preparing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Preparing] ERROR-->\"   >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Modeling] starts-->: `date`\"   >&2
+if
+        bash $mbridge_model
+        perl $Bin/bin/parawork.pl $shell/all.ele.model.sh $outdir $cpu
+then
+        echo \"---step [MBRidge Prediction Modeling] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Modeling] ERROR-->\"   >&2
+        exit
+fi
+echo \"---step [MBRidge Prediction Summarizing] starts-->: `date`\"   >&2
+
+if
+        bash $mbridge_comb
+then
+        echo \"---step [MBRidge Prediction Summarizing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Summarizing] ERROR-->\"   >&2
+        exit
+fi
+
+
+echo \"--------------------------------------------\" >&2 ;echo \"Project ends: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+";				
+	}
+}elsif($form1 =~/fq/i){
+	if ($form2=~/cout/i){
+		print RUN "echo \"--------------------------------------------\" >&2 ;echo \"Project starts: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+echo \"---step [combine couts of RRBS] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of RRBS] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of RRBS] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [Bisulfite mapping and methylation calling of MB-seq data] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/bsmap_mb.sh $outdir $cpu        
+then
+        echo \"---step [Bisulfite mapping and methylation calling of MB-seq data] done-->: `date`\" >&2
+else
+        echo \"---step [Bisulfite mapping and methylation calling of MB-seq data] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [combine couts of MB-seq] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_mb.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of MB-seq] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of MB-seq] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Preparing] starts-->: `date`\"   >&2
+if
+        bash $mbridge_sh
+then
+        echo \"---step [MBRidge Prediction Preparing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Preparing] ERROR-->\"   >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Modeling] starts-->: `date`\"   >&2
+if
+        bash $mbridge_model
+        perl $Bin/bin/parawork.pl $shell/all.ele.model.sh $outdir $cpu
+then
+        echo \"---step [MBRidge Prediction Modeling] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Modeling] ERROR-->\"   >&2
+        exit
+fi
+echo \"---step [MBRidge Prediction Summarizing] starts-->: `date`\"   >&2
+
+if
+        bash $mbridge_comb
+then
+        echo \"---step [MBRidge Prediction Summarizing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Summarizing] ERROR-->\"   >&2
+        exit
+fi
+
+
+echo \"--------------------------------------------\" >&2 ;echo \"Project ends: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+";
+	}elsif($form2 =~/fq/i){
+		print RUN "echo \"--------------------------------------------\" >&2 ;echo \"Project starts: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+echo \"---step [Bisulfite mapping and methylation calling of MB-seq data] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/bsmap_mb.sh $outdir $cpu        
+then
+        echo \"---step [Bisulfite mapping and methylation calling of MB-seq data] done-->: `date`\" >&2
+else
+        echo \"---step [Bisulfite mapping and methylation calling of MB-seq data] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [combine couts of MB-seq] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_mb.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of MB-seq] done-->: `date`\"  >&2
+else
+        echo \"---step [combine couts of MB-seq] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [Bisulfite mapping and methylation calling of RRBS data] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/bsmap_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [Bisulfite mapping and methylation calling of RRBS data] done-->: `date`\" >&2
+else
+        echo \"---step [Bisulfite mapping and methylation calling of RRBS data] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [combine couts of RRBS] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of RRBS] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of RRBS] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Preparing] starts-->: `date`\"   >&2
+if
+        bash $mbridge_sh
+then
+        echo \"---step [MBRidge Prediction Preparing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Preparing] ERROR-->\"   >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Modeling] starts-->: `date`\"   >&2
+if
+        bash $mbridge_model
+        perl $Bin/bin/parawork.pl $shell/all.ele.model.sh $outdir $cpu
+then
+        echo \"---step [MBRidge Prediction Modeling] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Modeling] ERROR-->\"   >&2
+        exit
+fi
+echo \"---step [MBRidge Prediction Summarizing] starts-->: `date`\"   >&2
+
+if
+        bash $mbridge_comb
+then
+        echo \"---step [MBRidge Prediction Summarizing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Summarizing] ERROR-->\"   >&2
+        exit
+fi
+
+
+echo \"--------------------------------------------\" >&2 ;echo \"Project ends: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+";
+	}elsif($form2=~/sam/i || $form2=~/bam/i){
+		print RUN "echo \"--------------------------------------------\" >&2 ;echo \"Project starts: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+echo \"---step [methylation calling from $form2 format of RRBS data] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/sam2cout_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [methylation calling from $form2 format of RRBS data] done-->: `date`\" >&2
+else
+        echo \"---step [methylation calling from $form2 format of RRBS data] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [combine couts of RRBS] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of RRBS] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of RRBS] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [Bisulfite mapping and methylation calling of MB-seq data] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/bsmap_mb.sh $outdir $cpu        
+then
+        echo \"---step [Bisulfite mapping and methylation calling of MB-seq data] done-->: `date`\" >&2
+else
+        echo \"---step [Bisulfite mapping and methylation calling of MB-seq data] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [combine couts of MB-seq] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_mb.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of MB-seq] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of MB-seq] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Preparing] starts-->: `date`\"   >&2
+if
+        bash $mbridge_sh
+then
+        echo \"---step [MBRidge Prediction Preparing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Preparing] ERROR-->\"   >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Modeling] starts-->: `date`\"   >&2
+if
+        bash $mbridge_model
+        perl $Bin/bin/parawork.pl $shell/all.ele.model.sh $outdir $cpu
+then
+        echo \"---step [MBRidge Prediction Modeling] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Modeling] ERROR-->\"   >&2
+        exit
+fi
+echo \"---step [MBRidge Prediction Summarizing] starts-->: `date`\"   >&2
+
+if
+        bash $mbridge_comb
+then
+        echo \"---step [MBRidge Prediction Summarizing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Summarizing] ERROR-->\"   >&2
+        exit
+fi
+
+
+echo \"--------------------------------------------\" >&2 ;echo \"Project ends: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+";	
+	}	
+}elsif($form1=~/sam/i || $form1=~/bam/i ){
+	if ($form2=~/cout/i){
+		print RUN "echo \"--------------------------------------------\" >&2 ;echo \"Project starts: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+echo \"---step [combine couts of RRBS] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of RRBS] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of RRBS] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [methylation calling from $form1 format of MB-seq data] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/sam2cout_mb.sh $outdir $cpu        
+then
+        echo \"---step [methylation calling from $form1 format of MB-seq data] done-->: `date`\" >&2
+else
+        echo \"---step [methylation calling from $form1 format of MB-seq data] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [combine couts of MB-seq] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_mb.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of MB-seq] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of MB-seq] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Preparing] starts-->: `date`\"   >&2
+if
+        bash $mbridge_sh
+then
+        echo \"---step [MBRidge Prediction Preparing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Preparing] ERROR-->\"   >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Modeling] starts-->: `date`\"   >&2
+if
+        bash $mbridge_model
+        perl $Bin/bin/parawork.pl $shell/all.ele.model.sh $outdir $cpu
+then
+        echo \"---step [MBRidge Prediction Modeling] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Modeling] ERROR-->\"   >&2
+        exit
+fi
+echo \"---step [MBRidge Prediction Summarizing] starts-->: `date`\"   >&2
+
+if
+        bash $mbridge_comb
+then
+        echo \"---step [MBRidge Prediction Summarizing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Summarizing] ERROR-->\"   >&2
+        exit
+fi
+
+
+echo \"--------------------------------------------\" >&2 ;echo \"Project ends: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+";			
+	}elsif($form2=~/fq/i){
+		print RUN "echo \"echo \"--------------------------------------------\" >&2 ;echo \"Project starts: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+echo \"---step [methylation calling from $form1 format of MB-seq data] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/sam2cout_mb.sh $outdir $cpu        
+then
+        echo \"---step [methylation calling from $form1 format of MB-seq data] done-->: `date`\" >&2
+else
+        echo \"---step [methylation calling from $form1 format of MB-seq data] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [combine couts of RRBS] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_mb.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of RRBS] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of RRBS] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [Bisulfite mapping and methylation calling of RRBS data] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/bsmap_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [Bisulfite mapping and methylation calling of RRBS data] done-->: `date`\" >&2
+else
+        echo \"---step [Bisulfite mapping and methylation calling of RRBS data] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [combine couts of RRBS] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of RRBS] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of RRBS] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Preparing] starts-->: `date`\"   >&2
+if
+        bash $mbridge_sh
+then
+        echo \"---step [MBRidge Prediction Preparing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Preparing] ERROR-->\"   >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Modeling] starts-->: `date`\"   >&2
+if
+        bash $mbridge_model
+        perl $Bin/bin/parawork.pl $shell/all.ele.model.sh $outdir $cpu
+then
+        echo \"---step [MBRidge Prediction Modeling] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Modeling] ERROR-->\"   >&2
+        exit
+fi
+echo \"---step [MBRidge Prediction Summarizing] starts-->: `date`\"   >&2
+
+if
+        bash $mbridge_comb
+then
+        echo \"---step [MBRidge Prediction Summarizing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Summarizing] ERROR-->\"   >&2
+        exit
+fi
+
+
+echo \"--------------------------------------------\" >&2 ;echo \"Project ends: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+";		
+	}elsif($form2=~/sam/i || $form2=~/bam/i){
+		print RUN "echo \"--------------------------------------------\" >&2 ;echo \"Project starts: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+echo \"---step [methylation calling from $form1 format of MB-seq data] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/sam2cout_mb.sh $outdir $cpu        
+then
+        echo \"---step [methylation calling from $form1 format of MB-seq data] done-->: `date`\" >&2
+else
+        echo \"---step [methylation calling from $form1 format of MB-seq data] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [combine couts of MB-seq] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_mb.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of MB-seq] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of MB-seq] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [methylation calling from $form1 format of RRBS data] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/sam2cout_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [methylation calling from $form1 format of RRBS data] done-->: `date`\" >&2
+else
+        echo \"---step [methylation calling from $form1 format of RRBS data] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [combine couts of RRBS] starts-->: `date`\" >&2
+if
+        perl $Bin/bin/parawork.pl $shell/combine_cout_rrbs.sh $outdir $cpu        
+then
+        echo \"---step [combine couts of RRBS] done-->: `date`\" >&2
+else
+        echo \"---step [combine couts of RRBS] ERROR-->\" >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Preparing] starts-->: `date`\"   >&2
+if
+        bash $mbridge_sh
+then
+        echo \"---step [MBRidge Prediction Preparing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Preparing] ERROR-->\"   >&2
+        exit
+fi
+
+echo \"---step [MBRidge Prediction Modeling] starts-->: `date`\"   >&2
+if
+        bash $mbridge_model
+        perl $Bin/bin/parawork.pl $shell/all.ele.model.sh $outdir $cpu
+then
+        echo \"---step [MBRidge Prediction Modeling] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Modeling] ERROR-->\"   >&2
+        exit
+fi
+echo \"---step [MBRidge Prediction Summarizing] starts-->: `date`\"   >&2
+
+if
+        bash $mbridge_comb
+then
+        echo \"---step [MBRidge Prediction Summarizing] done-->: `date`\"   >&2
+else
+        echo \"---step [MBRidge Prediction Summarizing] ERROR-->\"   >&2
+        exit
+fi
+
+
+echo \"--------------------------------------------\" >&2 ;echo \"Project ends: `date`\"  >&2;echo \"--------------------------------------------\" >&2 ;
+";	
+	}	
+}
+
+`sh $shell/MBRidge_run.sh`;
+rm();
+#----------------------------------------------------------------------------------------#####
+##########################=============== sub projuect ================#######################
+#----------------------------------------------------------------------------------------#####
+
+sub index_fq{
+	my $fqlist=shift;
+	`perl $Bin/bin/index_id.pl $fqlist $fqlist.tmp`;
+}
+sub comb_cout{
+	my $fqlist=shift;
+	my $worksh=shift;
+	my $iffq=shift;
+	my $ifsam=shift;
+	my $ifRRBS=shift;
+	my $outdir=shift;
+	open FQ,"$fqlist.tmp" or die "$!";
+	open CC,">$worksh" or die "Cannot open $worksh\n";
+	my ($tfq,$afq,$min,$max,$id);
+	my ($input);
+	my $outfile="MB-seq.combined.cout";
+	if ($ifRRBS==1){
+		$outfile="RRBS.combined.cout";
+	}
+	while (<FQ>){
+		chomp;
+                next if ($_=~/^#/);
+                next if ($_=~/^\s*$/);
+                my @info = split /\s+/,$_;
+		if($iffq==1){
+			if(@info != 5 && @info != 2){
+                                die "ERROR input fq list, please check it:shoud be set 1 (SE) or 4 (PE) columns each line\n";
+                        }
+			my $mapresult=$mapresult1;
+			if ($ifRRBS==1){
+				$mapresult=$mapresult2;
+			}
+	                my ($name,$outtmp);
+        	        if(@info==5){
+				($id,$tfq,$afq,$min,$max)=@info[0,1,2,3,4];
+	                        $outtmp="$mapresult/bsmap_id$id";
+                	        my $name1=basename($tfq);
+        	                my $name2=basename($afq);
+	                        $name="$name1\_$name2";
+				$input.="$outtmp/$name.cout".",";
+			}else{
+				($id,$tfq)=@info[0,1];
+                        	$outtmp="$mapresult/bsmap_id$id";
+                	        makedir($outtmp);
+        	                my $name1=basename($tfq);
+	                        $name="$name1";
+				$input.="$outtmp/$name.cout".",";
+			}
+		}elsif($ifsam==1){
+			if(@info != 2){
+                        	die "ERROR input fq list, please check it:shoud be set one column each line\n";
+                        }
+			my $methydir=$methydir1;
+                        if ($ifRRBS==1){
+                                $methydir=$methydir2;
+                        }
+			my ($name,$outtmp);
+			my ($id,$sam)=@info[0,1];
+			$outtmp="$methydir/callmethy_id$id";
+			makedir($outtmp);
+			my $name1=basename($sam);
+			$name="$name1";
+			$input.="$outtmp/$name.cout".",";
+		}else{
+			if(@info != 2){
+                                die "ERROR input cout list, please check it:shoud be set one column each line\n";
+                        }	
+			$input.=$info[1];
+		}
+	}
+	close FQ;
+	print CC "perl $Bin/bin/combine_cout.pl -i $input -o $outdir/$outfile\n";
+
+}
+sub bsmap{
+	my ($mapresult,$fqlist,$A,$E,$W,$M,$S,$fh,$rmdup,$trim,$dep)=@_;
+        open FQ,"$fqlist.tmp" or die "$!";
+        my ($tfq,$afq,$min,$max,$id);
+        while(<FQ>){
+                chomp;
+                next if ($_=~/^#/);
+                next if ($_=~/^\s*$/);
+                my @info = split /\s+/,$_;
+                if(@info != 5 && @info != 2){
+                        die "ERROR input fq.list, please check it:shoud be set 1 (SE) or 4 (PE) columns each line\n";
+                }
+		my ($name,$outtmp);
+		if(@info==5){
+                	($id,$tfq,$afq,$min,$max)=@info[0,1,2,3,4];
+			$qs=qualsys($tfq);
+			$outtmp="$mapresult/bsmap_id$id";
+			makedir($outtmp);
+			my $name1=basename($tfq);
+	                my $name2=basename($afq);
+			$name="$name1\_$name2";
+			print $fh "$Bin/tools/bsmap  -a $tfq  -b $afq -d $ref -o $outtmp/$name.sam -m $min -x $max -r 0 -S 1 -z $qs  -s $S $A  $M $E $W -q $qvalue -f $n -p $cpu -v $um >& $outtmp/$name.map.log.xls; python $Bin/bin/methratio.py $outtmp/$name.sam $rmdup -g -z -m $dep -x $pat -t $trim -u -d  $ref -o $outtmp/$name.methy ; perl $Bin/bin/methy2cout.pl -i $outtmp/$name.methy -o $outtmp/$name.cout -p $pat\n";
+		}else{
+			($id,$tfq)=@info[0,1];
+			$qs=qualsys($tfq);
+                        $outtmp="$mapresult/bsmap_id$id";
+                        makedir($outtmp);
+			my $name1=basename($tfq);
+			$name="$name1";
+			print $fh "$Bin/tools/bsmap  -a $tfq -d $ref -o $outtmp/$name.sam -r 0 -S 1 -z $qs  -s $S $A $M $E $W -q $qvalue -f $n -p $cpu -v $um >& $outtmp/$name.map.log.xls; python $Bin/bin/methratio.py $outtmp/$name.sam $rmdup -g -z -m $dep -x $pat -t $trim -u -d  $ref -o $outtmp/$name.methy ; perl $Bin/bin/methy2cout.pl -i $outtmp/$name.methy -o $outtmp/$name.cout -p $pat\n";
+		}
+	}
+	close FQ;
+}
+sub callmethy{#just for sam/bam input format...2...cout!
+	my ($fqlist,$worksh,$rmdup,$trim,$outdir,$ifbam,$dep)=@_;
+	open FQ,"$fqlist.tmp" or die "$!";
+	open CM,">$worksh" or die "Cannot open $worksh\n";
+        my ($sam,$id);
+	while(<FQ>){
+                chomp;
+                next if ($_=~/^#/);
+                next if ($_=~/^\s*$/);
+                my @info = split /\s+/,$_;
+                if(@info != 2){
+                        die "ERROR input fq.list, please check it:shoud be set 1 column each line\n";
+                }
+                my ($name,$outtmp);
+		($id,$sam)=@info[0,1];	
+		$outtmp="$outdir/callmethy_id$id";
+		makedir($outtmp);
+		my $name1=basename($sam);
+		$name="$name1";
+		if ($ifbam==1){
+			print CM "$Bin/tools/samtools view $sam -o $outtmp/$name.sam; python $Bin/bin/methratio.py $outtmp/$name.sam $rmdup -g -z -m $dep -x $pat -t $trim -u -d $ref -o $outtmp/$name.methy; perl $Bin/bin/methy2cout.pl -i $outtmp/$name.methy -o $outtmp/$name.cout -p $pat\n";
+		}else{
+			print CM "python $Bin/bin/methratio.py $sam $rmdup -g -z -m $dep -x $pat -t $trim -u -d  $ref -o $outtmp/$name.methy; perl $Bin/bin/methy2cout.pl -i $outtmp/$name.methy -o $outtmp/$name.cout -p $pat\n";	
+		}
+	}
+	close FQ;
+}
+
+sub run {
+	print WOK "#!/bin/bash
+cd $outdir
+starttime=`date`
+echo \"-------------\nBegin fastqc quality analysis at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+perl $Bin/bin/parawork.pl $shell/fastqc.sh $outdir $cpu 
+endtime=\$(date +\%s)\necho \"-------------\nfastqc works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+
+
+starttime=`date`
+echo \"-------------\nBegin bsufilte mapping analysis at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+bash $shell/bsmap.sh
+endtime=\$(date +\%s)\necho \"-------------\nbsmapping works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+
+if [ \$? -ne 0 ]; then
+        echo \"#########bsufilte mapping analysis not sucessful.##########\"
+        exit 1
+fi
+
+starttime=`date`
+echo \"-------------\nBegin strands divding analysis at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+perl $Bin/bin/parash.pl $shell/divide.sh $outdir $cpu 
+endtime=\$(date +\%s)\necho \"-------------\ndivding works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+
+if [ \$? -ne 0 ]; then
+        echo \"###########strands divding analysis not sucessful.###########\"
+        exit 1
+fi
+
+starttime=`date`
+echo \"-------------\nBegin samviewer(sam to bam and sort bam) analysis at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+perl $Bin/bin/parash.pl $shell/samview.sh $outdir $cpu
+endtime=\$(date +\%s)\necho \"-------------\nsamviewing works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+
+if [ \$? -ne 0 ]; then
+        echo \"##########samviewer(sam to bam and sort bam) analysis not sucessful.###########\"
+        exit 1
+fi
+starttime=`date`
+echo \"-------------\nBegin merging for Click and Watson strands at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+bash $shell/merge.c.sh
+bash $shell/merge.w.sh
+endtime=\$(date +\%s)\necho \"-------------\nmerging works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+if [ \$? -ne 0 ]; then
+        echo \"##########merging analysis not sucessful.###########\"
+        exit 1
+fi
+starttime=`date`
+echo \"-------------\nBegin mpileup for Click and Watson strands at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+bash $shell/pileup.c.sh
+bash $shell/pileup.w.sh
+endtime=\$(date +\%s)\necho \"-------------\nmpileuping works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+
+if [ \$? -ne 0 ]; then
+        echo \"######### mpileup for Click and Watson strands not sucessful.###########\"
+        exit 1
+fi
+
+starttime=`date`
+echo \"-------------\nBegin bayesian calling mC and SNP for Click and Watson strands at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+bash $shell/bayes.sh
+perl $Bin/bin/parash.pl  $shell/click.bayes.sh $outdir $cpu
+perl $Bin/bin/parash.pl  $shell/watson.bayes.sh $outdir $cpu
+cat $bayesdir/C/mC/*.mC.final |sort -k 1,1 -k 4,4n  > $resultdir/mC.xls
+cat $bayesdir/C/SNP/*.SNP |sort -k 1,1 -k 4,4n  > $resultdir/SNP.xls
+cat $bayesdir/C/nonmC/*.nonmC* |sort -k 1,1 -k 4,4n  > $resultdir/non_mC.xls
+echo  \"bayesian calling of mC and SNP for Click and Watson strands completed sucessfully\"
+if [ \$? -ne 0 ]; then
+        echo \"#########bayesian calling mC and SNP for Click and Watson strands not sucessful.#######\"
+        exit 1
+fi
+"; 
+}
+sub work2{
+	print WOK "#!/bin/bash
+cd $outdir
+starttime=`date`
+echo \"-------------\nBegin strands divding analysis at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+perl $Bin/bin/parash.pl $shell/divide.sh $outdir $cpu 
+endtime=\$(date +\%s)\necho \"-------------\ndivding works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+
+if [ \$? -ne 0 ]; then
+        echo \"###########strands divding analysis not sucessful.###########\"
+        exit 1
+fi
+
+starttime=`date`
+echo \"-------------\nBegin samviewer(sam to bam and sort bam) analysis at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+perl $Bin/bin/parash.pl $shell/samview.sh $outdir $cpu
+endtime=\$(date +\%s)\necho \"-------------\nsamviewing works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+
+if [ \$? -ne 0 ]; then
+        echo \"##########samviewer(sam to bam and sort bam) analysis not sucessful.###########\"
+        exit 1
+fi
+starttime=`date`
+echo \"-------------\nBegin merging for Click and Watson strands at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+bash $shell/merge.c.sh
+bash $shell/merge.w.sh
+endtime=\$(date +\%s)\necho \"-------------\nmerging works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+if [ \$? -ne 0 ]; then
+        echo \"##########merging analysis not sucessful.###########\"
+        exit 1
+fi
+starttime=`date`
+echo \"-------------\nBegin mpileup for Click and Watson strands at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+bash $shell/pileup.c.sh
+bash $shell/pileup.w.sh
+endtime=\$(date +\%s)\necho \"-------------\nmpileuping works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+
+if [ \$? -ne 0 ]; then
+        echo \"######### mpileup for Click and Watson strands not sucessful.###########\"
+        exit 1
+fi
+
+starttime=`date`
+echo \"-------------\nBegin bayesian calling mC and SNP for Click and Watson strands at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+bash $shell/bayes.sh
+perl $Bin/bin/parash.pl  $shell/click.bayes.sh $outdir $cpu
+perl $Bin/bin/parash.pl  $shell/watson.bayes.sh $outdir $cpu
+cat $bayesdir/C/mC/*.mC |sort -k 1,1 -k 2,2n  > $resultdir/mC.xls
+cat $bayesdir/C/SNP/*.SNP |sort -k 1,1 -k 2,2n  > $resultdir/SNP.xls
+cat $bayesdir/C/nonmC/*.nonmC |sort -k 1,1 -k 2,2n  > $resultdir/non_mC.xls
+echo  \"bayesian calling of mC and SNP for Click and Watson strands completed sucessfully\"
+if [ \$? -ne 0 ]; then
+        echo \"#########bayesian calling mC and SNP for Click and Watson strands not sucessful.#######\"
+        exit 1
+fi
+"; 	
+}
+sub work3{
+	print WOK "#!/bin/bash
+cd $outdir
+starttime=`date`
+echo \"-------------\nBegin bam2sam analysis at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+perl $Bin/bin/parash.pl $shell/bam2sam.sh $outdir $cpu 
+endtime=\$(date +\%s)\necho \"-------------\nbam2sam works above have been done--> using time: \$((\$endtime-\$star
+ttime)) S\n-------------\"\n
+
+starttime=`date`
+echo \"-------------\nBegin strands divding analysis at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+perl $Bin/bin/parash.pl $shell/divide.sh $outdir $cpu 
+endtime=\$(date +\%s)\necho \"-------------\ndivding works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+
+if [ \$? -ne 0 ]; then
+        echo \"###########strands divding analysis not sucessful.###########\"
+        exit 1
+fi
+
+starttime=`date`
+echo \"-------------\nBegin samviewer(sam to bam and sort bam) analysis at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+perl $Bin/bin/parash.pl $shell/samview.sh $outdir $cpu
+endtime=\$(date +\%s)\necho \"-------------\nsamviewing works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+
+if [ \$? -ne 0 ]; then
+        echo \"##########samviewer(sam to bam and sort bam) analysis not sucessful.###########\"
+        exit 1
+fi
+starttime=`date`
+echo \"-------------\nBegin merging for Click and Watson strands at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+bash $shell/merge.c.sh
+bash $shell/merge.w.sh
+endtime=\$(date +\%s)\necho \"-------------\nmerging works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+if [ \$? -ne 0 ]; then
+        echo \"##########merging analysis not sucessful.###########\"
+        exit 1
+fi
+starttime=`date`
+echo \"-------------\nBegin mpileup for Click and Watson strands at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+bash $shell/pileup.c.sh
+bash $shell/pileup.w.sh
+endtime=\$(date +\%s)\necho \"-------------\nmpileuping works above have been done--> using time: \$((\$endtime-\$starttime)) S\n-------------\"\n
+
+if [ \$? -ne 0 ]; then
+        echo \"######### mpileup for Click and Watson strands not sucessful.###########\"
+        exit 1
+fi
+
+starttime=`date`
+echo \"-------------\nBegin bayesian calling mC and SNP for Click and Watson strands at: \$starttime.\n.............\"
+starttime=\$(date +\%s)\n
+bash $shell/bayes.sh
+perl $Bin/bin/parash.pl  $shell/click.bayes.sh $outdir $cpu
+perl $Bin/bin/parash.pl  $shell/watson.bayes.sh $outdir $cpu
+cat $bayesdir/C/mC/*.mC |sort -k 1,1 -k 2,2n  > $resultdir/mC.xls
+cat $bayesdir/C/SNP/*.SNP |sort -k 1,1 -k 2,2n  > $resultdir/SNP.xls
+cat $bayesdir/C/nonmC/*.nonmC |sort -k 1,1 -k 2,2n  > $resultdir/non_mC.xls
+echo  \"bayesian calling of mC and SNP for Click and Watson strands completed sucessfully\"
+if [ \$? -ne 0 ]; then
+        echo \"#########bayesian calling mC and SNP for Click and Watson strands not sucessful.#######\"
+        exit 1
+fi
+"; 
+}
+sub rm {
+	if ($verb=~/yes/i){;}
+	else{
+		if (-d $mapresult1){
+			`rm -rf $mapresult1`;
+		}
+		if (-d $mapresult2){
+                        `rm -rf $mapresult2`;
+                }
+		if (-d $methydir1){
+			`rm -rf $methydir1`;
+		}
+		if (-d $methydir2){
+                        `rm -rf $methydir2`;
+                }
+		if (-d $combine){
+                        `rm -rf $combine`;
+                }
+		if(-d $shell){
+                #        `rm -rf $shell`;
+                }
+	}
+}
+sub showLog {
+        my ($info) = @_;
+        my @times = localtime; # sec, min, hour, day, month, year
+        print STDERR sprintf("[%d-%02d-%02d %02d:%02d:%02d] %s\n", $times[5] + 1900,$times[4] + 1, $times[3], $times[2], $times[1], $times[0], $info);
+}
+sub makedir{
+	my $dir=shift;
+	`mkdir -p $dir` unless (-d $dir);
+}
+sub runtime{
+        if(@_ !=1){
+                print "please input a parameter!";
+        }else{
+                print STDERR "MBRidge: calling methylation levels from MB-seq and RRBS completes by using time:";
+                print STDERR time()-$_[0];
+                print STDERR " s\n";
+        }       
+}
+=cut
+sub qualsys{
+	my $fastq=shift;
+	my $format = "";
+	# set regular expressions
+	my $sanger_regexp = qr/[!"#$%&'()*+,-.\/0123456789:]/;
+	my $solexa_regexp = qr/[\;<=>\?]/;
+	my $solill_regexp = qr/[JKLMNOPQRSTUVWXYZ\[\]\^\_\`abcdefgh]/;
+	my $all_regexp = qr/[\@ABCDEFGHI]/;
+	# set counters
+	my $sanger_counter = 0;
+	my $solexa_counter = 0;
+	my $solill_counter = 0;
+	if ($fastq=~/\S+.gz/){
+        	open IN,"gzip -dc $fastq |" or die $!;
+	}else{
+        	open IN,"$fastq" or die $!;
+	}
+	my $i;
+	while(<IN>){
+	    $i++;
+
+	    # retrieve qualities
+	    next unless $i % 4 eq 0;
+
+	    #print;
+	    chomp;
+
+	    # check qualities
+	    if( m/$sanger_regexp/ ){
+        	$sanger_counter = 1;
+	        last;
+	    }
+	    if( m/$solexa_regexp/ ){
+        	$solexa_counter = 1;
+	        last;
+	    }	
+	    if( m/$solill_regexp/ ){
+        	$solill_counter = 1;
+	        last;
+    	    }
+	}
+
+	# determine format
+	if( $sanger_counter ){
+		$format = "Sanger/Illumina1.9+ (Phred33)";
+		return 33;
+	}
+	elsif( !$sanger_counter && $solexa_counter ){
+		$format = "Solexa (Phred64)";
+		return 64;
+    	}
+	elsif( !$sanger_counter && !$solexa_counter && $solill_counter ){
+		$format = "Illumina1.8- (Phred64)";
+		return 64;
+	}	
+}
+=cut
+sub qualsys{
+	my $fastq=shift;
+	my ($Q, @IN, $i, $read_num);
+	our ($count,$lt_zero,$base_count) = (0,0,0);
+	$Q=64;
+	$read_num = 4000;
+	if ($fastq=~/\S+.gz$/){
+		open IN,"gzip -dc $fastq|" or die "Can not open $fastq\n";
+	}else{
+		open IN,"$fastq" or die "Can not open $fastq\n";
+	}
+	while($count < $read_num){
+		$count++;
+		@IN=();	
+		#read four lines from IN
+		for($i=0; $i<=3; $i++){
+			$IN[$i]=<IN>;
+		}
+		last if $IN[0] eq "" ;
+		&print_score($IN[3],$Q);
+	}
+	close IN;
+	sub print_score{
+		my ($read, $Q) = @_;
+		my ($j,$score);
+		for($j=0; $j<=length($read)-2; $j++){
+			$score = ord(substr($read, $j,1))-$Q;
+			$base_count++;
+			if ($score < 0){ $lt_zero += 1; }
+		}
+	}
+	if ($lt_zero > 0 ){
+	  return 33;
+	}else{
+	  return 64;
+	}
+}
